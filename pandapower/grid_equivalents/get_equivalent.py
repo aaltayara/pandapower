@@ -4,8 +4,8 @@ import time
 from copy import deepcopy
 from pandapower.grid_equivalents.auxiliary import drop_assist_elms_by_creating_ext_net, \
     drop_internal_branch_elements, add_ext_grids_to_boundaries, \
-    _ensure_unique_boundary_bus_names, match_controller_and_new_elements, \
-    match_cost_functions_and_eq_net, _check_network, _runpp_except_voltage_angles
+    _ensure_unique_boundary_bus_names, match_cost_functions_and_eq_net, \
+    _check_network, _runpp_except_voltage_angles
 from pandapower.grid_equivalents.rei_generation import _create_net_zpbn, \
     _get_internal_and_external_nets, _calculate_equivalent_Ybus, \
     _create_bus_lookups, _calclate_equivalent_element_params, \
@@ -154,7 +154,8 @@ def get_equivalent(net, eq_type, boundary_buses, internal_buses,
     # --- create reference buses
     orig_slack_gens = add_ext_grids_to_boundaries(
         net, boundary_buses, adapt_va_degree, calc_volt_angles=calculate_voltage_angles,
-        allow_net_change_for_convergence=allow_net_change_for_convergence, runpp_fct=runpp_fct)
+        allow_net_change_for_convergence=allow_net_change_for_convergence, runpp_fct=runpp_fct,
+        **kwargs)
 
     # --- replace ward and xward elements by internal elements (load, shunt, impedance, gen)
     ext_buses_with_ward = net.ward.bus[net.ward.bus.isin(all_external_buses)]
@@ -169,7 +170,7 @@ def get_equivalent(net, eq_type, boundary_buses, internal_buses,
     # --- switch from ward injection to ward addmittance if requested
     if eq_type in ["ward", "xward"] and ward_type == "ward_admittance":
         create_passive_external_net_for_ward_admittance(
-            net, all_external_buses, boundary_buses, runpp_fct=runpp_fct)
+            net, all_external_buses, boundary_buses, runpp_fct=runpp_fct, **kwargs)
 
     # --- rei calculations
     if eq_type == "rei":
@@ -259,19 +260,21 @@ def get_equivalent(net, eq_type, boundary_buses, internal_buses,
 
     if return_internal:
         logger.debug("Merging of internal and equivalent network begins.")
+        if len(kwargs.get("central_controller_types", [])):
+            net_internal.controller.drop([idx for idx in net_internal.controller.index if any([
+                isinstance(net_internal.controller.object.at[idx], central_controller_type) for
+                central_controller_type in kwargs["central_controller_types"]])], inplace=True)
         net_eq = merge_internal_net_and_equivalent_external_net(
             net_eq, net_internal, show_computing_time=show_computing_time,
             calc_volt_angles=calculate_voltage_angles)
         if len(orig_slack_gens):
-            net_eq.gen.slack.loc[net_eq.gen.index.intersection(orig_slack_gens)] = True
+            net_eq.gen.loc[net_eq.gen.index.intersection(orig_slack_gens), "slack"] = True
         # run final power flow calculation
         net_eq = runpp_fct(net_eq, calculate_voltage_angles=calculate_voltage_angles)
     else:
         drop_assist_elms_by_creating_ext_net(net_eq)
         logger.debug("Only the equivalent net is returned.")
 
-    # match the controller and the new elements
-    match_controller_and_new_elements(net_eq, net)
     # delete bus in poly_cost
     match_cost_functions_and_eq_net(net_eq, boundary_buses, eq_type)
 
@@ -425,7 +428,7 @@ def drop_repeated_characteristic(net):
             repeated_idxs.append(m)
         else:
             idxs.append(idx)
-    net.characteristic.drop(repeated_idxs, inplace=True)
+    net.characteristic = net.characteristic.drop(repeated_idxs)
 
 
 def _determine_bus_groups(net, boundary_buses, internal_buses,
@@ -579,8 +582,8 @@ if __name__ == "__main__":
     net.gen.vm_pu[0] = 1.025
     net.gen.vm_pu[1] = 1.025
 
-    net.poly_cost.drop(net.poly_cost.index, inplace=True)
-    net.pwl_cost.drop(net.pwl_cost.index, inplace=True)
+    net.poly_cost = net.poly_cost.drop(net.poly_cost.index)
+    net.pwl_cost = net.pwl_cost.drop(net.pwl_cost.index)
     # pp.replace_gen_by_sgen(net)
     # net.sn_mva = 109.00
     boundary_buses = [4, 8]

@@ -16,12 +16,6 @@ from pandapower.grid_equivalents.ward_generation import \
     create_passive_external_net_for_ward_admittance
 from pandapower.grid_equivalents.auxiliary import _runpp_except_voltage_angles
 
-try:
-    from misc.groups import Group
-    group_imported = True
-except ImportError:
-    group_imported = False
-
 
 def create_test_net():
     net = pp.create_empty_network()
@@ -78,8 +72,8 @@ def run_basic_usecases(eq_type, net=None):
     # UC3b tests whether this also works for 'internal_buses' as empty list
     eq_net3b = pp.grid_equivalents.get_equivalent(
         subnet, eq_type, boundary_buses=[1, 5], internal_buses=[])
-    eq_net3a.sgen.drop(columns=["origin_id"], inplace=True)
-    eq_net3b.sgen.drop(columns=["origin_id"], inplace=True)
+    eq_net3a.sgen = eq_net3a.sgen.drop(columns=["origin_id"])
+    eq_net3b.sgen = eq_net3b.sgen.drop(columns=["origin_id"])
 
     assert set(eq_net3a["group"].index) == set(eq_net3b["group"].index)
     assert pandapower.toolbox.nets_equal(eq_net3a, eq_net3b, exclude_elms=["group"])
@@ -153,7 +147,7 @@ def test_cost_consideration():
 
         if cost_type == "pwl_cost":
             for poly in net.poly_cost.itertuples():
-                net.poly_cost.drop(poly.Index, inplace=True)
+                net.poly_cost = net.poly_cost.drop(poly.Index)
                 pp.create_pwl_cost(net, poly.element, poly.et, [[0, 20, 1]], index=poly.Index)
 
         # eq generation
@@ -245,8 +239,7 @@ def test_basic_usecases():
 def test_case9_with_slack_generator_in_external_net():
     net = pp.networks.case9()
     idx = pp.replace_ext_grid_by_gen(net)
-    net.gen.slack.loc[idx] = True
-    net.bus_geodata.drop(net.bus_geodata.index, inplace=True)
+    net.gen.loc[idx, 'slack'] = True
     pp.runpp(net)
 
     # since the only slack is in the external_buses, we expect get_equivalent() to move the slack
@@ -266,8 +259,8 @@ def test_case9_with_slack_generator_in_external_net():
         # UC1
         eq_net1 = pp.grid_equivalents.get_equivalent(net, eq_type, boundary_buses, internal_buses)
         eq_net1b = pp.grid_equivalents.get_equivalent(net, eq_type, list(boundary_buses), list(internal_buses))
-        eq_net1.gen.drop(columns=["origin_id"], inplace=True)
-        eq_net1b.gen.drop(columns=["origin_id"], inplace=True)
+        eq_net1.gen = eq_net1.gen.drop(columns=["origin_id"])
+        eq_net1b.gen = eq_net1b.gen.drop(columns=["origin_id"])
         assert pandapower.toolbox.nets_equal(eq_net1, eq_net1b)
         assert net.bus.name.loc[list(boundary_buses | internal_buses | slack_bus)].isin(
             eq_net1.bus.name).all()
@@ -374,9 +367,11 @@ def test_equivalent_groups():
     assert len(set(net_eq1.group.index)) == 1
     gr1_idx = net_eq1.group.index[0]
     for elm, no in [("bus", 3), ("load", 1), ("sgen", 2)]:
-        assert len(pp.group_row(net_eq1, gr1_idx, elm).at["element"]) == no
-    assert len(pp.group_row(net_eq1, gr1_idx, "impedance").at["element"]) == net_eq1.impedance.shape[0] - 1
-    assert len(pp.group_row(net_eq1, gr1_idx, "shunt").at["element"]) == net_eq1.shunt.shape[0] - 1
+        assert len(pp.group_row(net_eq1, gr1_idx, elm).at["element_index"]) == no
+    assert len(pp.group_row(net_eq1, gr1_idx, "impedance").at["element_index"]) == \
+        net_eq1.impedance.shape[0] - 1
+    assert len(pp.group_row(net_eq1, gr1_idx, "shunt").at["element_index"]) == \
+        net_eq1.shunt.shape[0] - 1
     pp.set_group_reference_column(net_eq1, gr1_idx, "origin_id")
 
     bb2 = {37}
@@ -388,7 +383,8 @@ def test_equivalent_groups():
         print("sgen_separate is " + str(sgen_separate))
         # test fails with lightsim2grid, for unknown reason
         net_eq2 = pp.grid_equivalents.get_equivalent(
-            net_eq1, "rei", bb2, int2, sgen_separate=sgen_separate, reference_column="origin_id", lightsim2grid=False)
+            net_eq1, "rei", bb2, int2, sgen_separate=sgen_separate, reference_column="origin_id",
+            lightsim2grid=False)
         gr2_idx = net_eq2.group.index[-1]
         assert len(set(net_eq2.group.index)) == 2
         assert len(set(pp.count_group_elements(net_eq2, gr2_idx).index) ^ {
@@ -398,9 +394,10 @@ def test_equivalent_groups():
         no_b = no_sg + no_l # number of expected buses
         # print(pp.count_group_elements(net_eq2, gr2_idx))
         for elm, no in [("bus", no_b), ("load", no_l), ("sgen", no_sg)]:
-            assert len(pp.group_row(net_eq2, gr2_idx, elm).at["element"]) == no
-        assert len(pp.group_row(net_eq2, gr2_idx, "impedance").at["element"]) > 0.5 * (no_b-1)**2  # the
-        # number of impedances is lower than no_b**2 since imp < 1e-8 were dropped
+            assert len(pp.group_row(net_eq2, gr2_idx, elm).at["element_index"]) == no
+        assert len(pp.group_row(net_eq2, gr2_idx, "impedance").at["element_index"]) > \
+            0.5 * (no_b-1)**2  # the number of impedances is lower than no_b**2 since imp < 1e-8
+            # were dropped
 
     # test 2nd xward
     net_eq2 = pp.grid_equivalents.get_equivalent(
@@ -409,15 +406,15 @@ def test_equivalent_groups():
     assert len(set(net_eq2.group.index)) == 2
     assert len(set(pp.count_group_elements(net_eq2, gr2_idx).index) ^ {"xward"}) == 0
     for elm, no in [("xward", 1)]:
-            assert len(pp.group_row(net_eq2, gr2_idx, elm).at["element"]) == no
+            assert len(pp.group_row(net_eq2, gr2_idx, elm).at["element_index"]) == no
 
 
 def test_shifter_degree():
     net = pp.networks.example_multivoltage()
-    net.trafo.shift_degree[0] = 30
-    net.trafo.shift_degree[1] = -60
-    net.trafo3w.shift_mv_degree[0] = 90
-    net.trafo3w.shift_lv_degree[0] = 150
+    net.trafo.at[0, "shift_degree"] = 30
+    net.trafo.at[1, "shift_degree"] = -60
+    net.trafo3w.at[0, "shift_mv_degree"] = 90
+    net.trafo3w.at[0, "shift_lv_degree"] = 150
     pp.runpp(net, calculate_voltage_angles=True)
 
     boundary_buses = list([net.trafo.hv_bus.values[1]]) + list(net.trafo.lv_bus.values) + \
@@ -536,7 +533,7 @@ def test_controller():
     assert net_eq.controller.object[0].__dict__["matching_params"]["element_index"] == [0, 2]
 
     # test individual controller:
-    net.controller.drop(net.controller.index, inplace=True)
+    net.controller = net.controller.drop(net.controller.index)
     for li in net.load.index:
         ConstControl(net, element='load', variable='p_mw', element_index=[li],
                      data_source=DFData(load_ts), profile_name=[li])
@@ -550,7 +547,8 @@ def test_motor():
     net = pp.networks.case9()
     pp.replace_gen_by_sgen(net)
     pp.create_motor(net, 5, 12, 0.9, scaling=0.8, loading_percent=89, efficiency_percent=90)
-    pp.create_motor(net, 7, 18, 0.9, scaling=0.9, loading_percent=88, efficiency_percent=95, in_service=False)
+    pp.create_motor(net, 7, 18, 0.9, scaling=0.9, loading_percent=88, efficiency_percent=95,
+                    in_service=False)
     pp.create_motor(net, 6, 10, 0.6, scaling=0.4, loading_percent=98, efficiency_percent=88)
     pp.create_motor(net, 3, 3, 0.6, scaling=0.4, loading_percent=89, efficiency_percent=99)
     pp.create_motor(net, 4, 6, 0.96, scaling=0.4, loading_percent=78, efficiency_percent=90)
